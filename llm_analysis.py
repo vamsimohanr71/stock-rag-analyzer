@@ -22,6 +22,8 @@ outside knowledge of the company, and never speculation presented as fact.
 Rules:
 - If the provided context is thin or contradictory, say so explicitly.
 - Never state a specific future price or percentage move as a prediction.
+- Never tell the reader to buy, sell, or hold - you are not a registered
+  investment adviser and this must never read as investment advice.
 - Always separate "what the sources say" from "what the technicals say".
 - List concrete risks mentioned in the sources.
 - End with a clear statement that this is not financial advice."""
@@ -89,7 +91,12 @@ Provide:
 2. How the technicals align or conflict with that sentiment
 {india_risk_line}
 4. A balanced outlook framed as scenarios, not a single prediction
-5. Confidence level (low/medium/high) based on how much and how recent the retrieved context is"""
+5. Confidence level (low/medium/high) based on how much and how recent the retrieved context is
+6. Overall Lean: a single line in exactly this format -
+   "Overall Lean: Bullish|Neutral|Bearish - <one sentence reasoning citing sources/technicals>"
+   This is a transparent synthesis of the sentiment and technicals above,
+   NOT a recommendation to buy, sell, or hold - phrase the reasoning so
+   that is unambiguous."""
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
@@ -106,3 +113,23 @@ def generate_analysis(ticker: str, retrieved: list[dict], technicals: dict) -> s
         ],
     )
     return response.choices[0].message.content
+
+
+def extract_lean(analysis_text: str) -> tuple[str, str] | None:
+    """
+    Pulls the "Overall Lean: Bullish|Neutral|Bearish - reasoning" line out
+    of the generated analysis for a badge display. Returns (lean, reasoning)
+    or None if the model didn't follow the format for some reason - callers
+    should handle that gracefully rather than assuming it's always present.
+    This is a transparent synthesis of retrieved signals, not investment
+    advice - display it labeled as such.
+    """
+    import re
+    match = re.search(
+        r"Overall Lean:\s*(Bullish|Neutral|Bearish)\s*-\s*(.+)",
+        analysis_text,
+        re.IGNORECASE,
+    )
+    if not match:
+        return None
+    return match.group(1).capitalize(), match.group(2).strip()
