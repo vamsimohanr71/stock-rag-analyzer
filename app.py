@@ -18,30 +18,42 @@ from config import validate_settings
 from ingestion import ingest_ticker, get_price_data, get_quick_price
 from retrieval import retrieve_context
 from technical import get_technical_signals
-from llm_analysis import generate_analysis
+from llm_analysis import generate_analysis, extract_lean
 
 st.set_page_config(page_title="Stock RAG Analyzer", layout="centered", page_icon="📊")
 
-# Tickers shown in the scrolling banner. Mix US and Indian (.NS/.BO) freely.
-TICKER_BANNER_SYMBOLS = ["AAPL", "MSFT", "NVDA", "RELIANCE.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS"]
+# Tickers shown in the scrolling banner. Kept short deliberately - each one
+# is a live network call to Yahoo Finance at page load, and cloud-hosted
+# IPs (like Streamlit Community Cloud's) are sometimes rate-limited or
+# slow to respond. Fewer tickers = faster, more reliable page loads.
+TICKER_BANNER_SYMBOLS = ["AAPL", "MSFT", "RELIANCE.NS", "TCS.NS"]
 
 
-def render_ticker_banner(symbols: list[str], refresh_seconds: int = 30):
+@st.cache_data(ttl=30, show_spinner=False)
+def _cached_banner_prices(symbols: tuple[str, ...]):
     """
-    Self-updating scrolling price banner. Fetches prices via
-    get_quick_price() at page-load time (Streamlit reruns the whole script
-    on interaction, so this refreshes naturally on any user action; the
-    CSS animation just gives it a live-feeling scroll in between).
-    Prices carry the same delay as the rest of the app (~15-20min via
-    Yahoo Finance's free feed) - not a true real-time feed.
+    Caches ticker banner prices for 30s. Without this, every single button
+    click (Streamlit reruns the whole script on any interaction) re-fetches
+    all banner tickers from Yahoo Finance, which was the single biggest
+    source of felt slowness - now it only actually re-fetches once every
+    30 seconds regardless of how many times the page reruns in between.
     """
     items = []
     for sym in symbols:
         try:
-            p = get_quick_price(sym)
-            items.append(p)
+            items.append(get_quick_price(sym))
         except Exception:
             items.append({"ticker": sym, "price": None, "change_pct": None, "currency": None})
+    return items
+
+
+def render_ticker_banner(symbols: list[str], refresh_seconds: int = 30):
+    """
+    Self-updating scrolling price banner. Prices carry the same delay as
+    the rest of the app (~15-20min via Yahoo Finance's free feed) - not a
+    true real-time feed.
+    """
+    items = _cached_banner_prices(tuple(symbols))
 
     spans = []
     for p in items:
@@ -79,7 +91,12 @@ except EnvironmentError as e:
     st.error(str(e))
     st.stop()
 
-render_ticker_banner(TICKER_BANNER_SYMBOLS)
+try:
+    render_ticker_banner(TICKER_BANNER_SYMBOLS)
+except Exception:
+    # Never let a flaky network/ticker banner block the rest of the app
+    # from loading - worst case, the banner just doesn't show.
+    st.caption("(Price ticker temporarily unavailable)")
 
 st.title("📊 Stock RAG Analyzer")
 st.caption("RAG-grounded news/filings analysis + technical indicators. Not financial advice.")
@@ -91,10 +108,34 @@ col1, col2 = st.columns(2)
 run_btn = col1.button("Analyze", type="primary")
 refresh_btn = col2.button("Force refresh data")
 
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def _cached_full_analysis(ticker: str):
+    """
+    Caches the full technicals + retrieval + LLM analysis for 30 minutes
+    per ticker. Without this, clicking "Analyze" again on a ticker you
+    just analyzed redoes the entire retrieval + LLM call from scratch -
+    slow, and it also burns NVIDIA free-tier rate limit for no reason
+    since nothing changed. "Force refresh data" bypasses this by
+    re-ingesting first, which naturally produces different retrieved docs.
+    """
+    hist = get_price_data(ticker)
+    technicals = get_technical_signals(hist)
+
+    docs = retrieve_context(ticker, f"{ticker} recent news, earnings, and outlook")
+    if not docs:
+        ingest_ticker(ticker)
+        docs = retrieve_context(ticker, f"{ticker} recent news, earnings, and outlook")
+
+    analysis = generate_analysis(ticker, docs, technicals)
+    return technicals, docs, analysis
+
+
 if refresh_btn and ticker:
     with st.spinner(f"Re-ingesting latest news for {ticker}..."):
         try:
             summary = ingest_ticker(ticker)
+            _cached_full_analysis.clear()  # drop stale cached analysis for this/all tickers
             st.success(f"Ingestion complete: {summary}")
         except Exception as e:
             st.error(f"Ingestion failed: {e}")
@@ -102,16 +143,7 @@ if refresh_btn and ticker:
 if run_btn and ticker:
     with st.spinner(f"Analyzing {ticker}... (first run may take longer while data is ingested)"):
         try:
-            hist = get_price_data(ticker)
-            technicals = get_technical_signals(hist)
-
-            docs = retrieve_context(ticker, f"{ticker} recent news, earnings, and outlook")
-            if not docs:
-                st.info("No cached data found for this ticker - ingesting now...")
-                ingest_ticker(ticker)
-                docs = retrieve_context(ticker, f"{ticker} recent news, earnings, and outlook")
-
-            analysis = generate_analysis(ticker, docs, technicals)
+            technicals, docs, analysis = _cached_full_analysis(ticker)
 
             st.subheader("Technical Indicators")
             t = technicals
@@ -121,6 +153,17 @@ if run_btn and ticker:
             m3.metric("Trend", t.get("trend", "—"))
             m4.metric("Volume", f"{t.get('volume', 0):,}")
             st.json(t)
+
+            lean_info = extract_lean(analysis)
+            if lean_info:
+                lean, reasoning = lean_info
+                lean_colors = {"Bullish": "🟢", "Neutral": "🟡", "Bearish": "🔴"}
+                st.info(
+                    f"{lean_colors.get(lean, '⚪')} **Sentiment/technical lean: {lean}** "
+                    f"— {reasoning}\n\n"
+                    f"_This is a synthesis of the retrieved signals above, not a recommendation "
+                    f"to buy, sell, or hold._"
+                )
 
             st.subheader("AI Analysis (RAG-grounded)")
             st.write(analysis)
