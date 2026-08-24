@@ -105,7 +105,7 @@ def generate_analysis(ticker: str, retrieved: list[dict], technicals: dict) -> s
     system_prompt = build_system_prompt(ticker)
     response = nim_client.chat.completions.create(
         model=settings.LLM_MODEL,
-        max_tokens=1500,
+        max_tokens=900,
         temperature=0.3,
         messages=[
             {"role": "system", "content": system_prompt},

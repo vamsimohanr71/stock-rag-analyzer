@@ -41,7 +41,7 @@ class Settings:
     CHROMA_DB_PATH = _get("CHROMA_DB_PATH", "./chroma_store")
 
     EMBEDDING_MODEL = _get("EMBEDDING_MODEL", "nvidia/nv-embedqa-e5-v5")
-    LLM_MODEL = _get("LLM_MODEL", "meta/llama-3.1-70b-instruct")
+    LLM_MODEL = _get("LLM_MODEL", "meta/llama-3.1-8b-instruct")
 
     NEWS_LOOKBACK_DAYS = int(_get("NEWS_LOOKBACK_DAYS", "14"))
     MAX_ARTICLES_PER_INGEST = int(_get("MAX_ARTICLES_PER_INGEST", "15"))

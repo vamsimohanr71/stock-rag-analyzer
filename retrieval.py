@@ -12,7 +12,7 @@ def embed_query(query: str) -> list[float]:
     return embeddings[0]
 
 
-def retrieve_context(ticker: str, query: str, k: int = 8) -> list[dict]:
+def retrieve_context(ticker: str, query: str, k: int = 5) -> list[dict]:
     """
     Returns a list of {text, source, date, url} dicts, most relevant first.
     Empty list means: no ingested data for this ticker yet - caller should
