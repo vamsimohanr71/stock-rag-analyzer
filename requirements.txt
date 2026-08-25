@@ -10,4 +10,3 @@ openai
 httpx
 plotly
 google-generativeai
-git+https://github.com
