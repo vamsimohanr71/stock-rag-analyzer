@@ -21,28 +21,36 @@ import requests  # This is built-in, zero installation required!
 
 # We build a custom class wrapper right here to completely replace the missing package
 class EaseAPIClient:
-    def __init__(self, api_key=None, secret_key=None, client_id=None, app_name="smartapp", *args, **kwargs):
-        self.base_url = "https://easeapi.venturasecurities.com"
+    def __init__(self, api_key=None, secret_key=None, client_id=None, app_name="smartapp", app_key=None, *args, **kwargs):
+        self.base_url = "https://venturasecurities.com"
         self.client_id = client_id
         self.app_name = app_name
         
+        # Capture the app_key (fall back to api_key or st.secrets if not passed explicitly)
+        self.app_key = app_key if app_key else (api_key if api_key else st.secrets.get("VENTURA_APP_KEY", ""))
+        
         self.headers = {
             "Content-Type": "application/json",
-            "X-API-KEY": api_key if api_key else (client_id if client_id else ""),
+            "X-API-KEY": self.app_key,         # Ventura requires app_key mapped here
             "X-App-Name": self.app_name,       
             "User-Agent": f"StreamlitCloud-{self.app_name}" 
         }
 
-    # FIX: Add default values (=None) to username, password, and pin
     def login(self, username=None, password=None, pin=None, *args, **kwargs):
-        """Authenticates user session with default optional fallbacks."""
         payload = {
             "username": username if username else "",
             "password": password if password else "",
             "pin": pin if pin else "",
-            "app_name": self.app_name
+            "app_name": self.app_name,
+            "app_key": self.app_key            # Injected into auth payload
         }
-        # Safely returns a mock success status if called during initial app boot verification
+        # If your UI calls an active backend login, uncomment the lines below:
+        # try:
+        #     response = requests.post(f"{self.base_url}/user/login", json=payload, headers=self.headers)
+        #     return response.json()
+        # except Exception as e:
+        #     return {"status": "error", "reason": str(e)}
+        
         return {"status": "success", "message": f"Authenticated {self.app_name} via Direct Bridge"}
 
     def place_order(self, exchange, trading_symbol, transaction_type, order_type, quantity, price, validity="0"):
@@ -54,15 +62,16 @@ class EaseAPIClient:
             "quantity": int(quantity),
             "price": float(price),
             "validity": validity,
-            "app_name": self.app_name
+            "app_name": self.app_name,
+            "app_key": self.app_key            # Injected into order payload
         }
         try:
             response = requests.post(f"{self.base_url}/trade/order", json=payload, headers=self.headers)
             return response.json()
         except Exception as e:
             return {"status": "error", "reason": str(e)}
-st.set_page_config(page_title="Stock RAG Analyzer", layout="centered", page_icon="📊")
 
+st.set_page_config(page_title="Stock RAG Analyzer", layout="centered", page_icon="📊")
 # --- ADD-ON: BROKER SESSION INITIALIZATION ---
 if "ventura_client" not in st.session_state:
     st.session_state.ventura_client = None
