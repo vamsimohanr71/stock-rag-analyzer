@@ -35,12 +35,26 @@ class Settings:
     FINNHUB_API_KEY = _get("FINNHUB_API_KEY", "")
     SEC_USER_AGENT = _get("SEC_USER_AGENT", "StockRAGApp contact@example.com")
 
+    # Ventura Securities (EaseAPI) broker integration - optional. Only
+    # needed if you want live/real broker data instead of yfinance's
+    # delayed free feed. Leave blank to skip this feature entirely.
+    # NOTE: the redirect URL after Ventura login is configured on Ventura's
+    # own developer portal (not passed by this app) - make sure it points
+    # to wherever this app is actually deployed.
+    VENTURA_APP_KEY = _get("VENTURA_APP_KEY", "")
+    VENTURA_SECRET_KEY = _get("VENTURA_SECRET_KEY", "")
+
     # Streamlit Community Cloud's filesystem is ephemeral - it resets on
     # every redeploy/restart/sleep-wake cycle. Chroma data will NOT persist
     # long-term on the free tier; each cold start re-ingests as needed.
     CHROMA_DB_PATH = _get("CHROMA_DB_PATH", "./chroma_store")
 
     EMBEDDING_MODEL = _get("EMBEDDING_MODEL", "nvidia/nv-embedqa-e5-v5")
+    # Switched from meta/llama-3.1-70b-instruct to the 8B variant - the 70B
+    # model's generation latency was likely the biggest remaining source of
+    # slowness (large model + up to 1500 output tokens, on a free tier with
+    # no dedicated capacity). 8B is noticeably faster with a modest quality
+    # trade-off. Override via secrets/.env if you want to switch back.
     LLM_MODEL = _get("LLM_MODEL", "meta/llama-3.1-8b-instruct")
 
     NEWS_LOOKBACK_DAYS = int(_get("NEWS_LOOKBACK_DAYS", "14"))
