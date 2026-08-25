@@ -14,13 +14,16 @@ import json
 import streamlit as st
 import streamlit.components.v1 as components
 
-from config import validate_settings
-from ingestion import ingest_ticker, get_price_data, get_quick_price
-from retrieval import retrieve_context
-from technical import get_technical_signals
-from llm_analysis import generate_analysis, extract_lean
+# --- ADD-ON: VENTURA API SDK IMPORT ---
+from easeapi import EaseAPIClient 
 
 st.set_page_config(page_title="Stock RAG Analyzer", layout="centered", page_icon="📊")
+
+# --- ADD-ON: BROKER SESSION INITIALIZATION ---
+if "ventura_client" not in st.session_state:
+    st.session_state.ventura_client = None
+if "ventura_logged_in" not in st.session_state:
+    st.session_state.ventura_logged_in = False
 
 # Tickers shown in the scrolling banner. Kept short deliberately - each one
 # is a live network call to Yahoo Finance at page load, and cloud-hosted
@@ -100,6 +103,40 @@ except Exception:
 
 st.title("📊 Stock RAG Analyzer")
 st.caption("RAG-grounded news/filings analysis + technical indicators. Not financial advice.")
+
+# --- ADD-ON: VENTURA SECURE SIDEBAR INTERFACE ---
+with st.sidebar:
+    st.header("🔌 Ventura EaseAPI")
+    if not st.session_state.ventura_logged_in:
+        # Tries to pull pre-saved credentials from st.secrets dynamically
+        def_id = st.secrets.get("VENTURA_CLIENT_ID", "")
+        def_key = st.secrets.get("VENTURA_APP_KEY", "")
+        def_secret = st.secrets.get("VENTURA_APP_SECRET", "")
+        
+        v_client_id = st.text_input("Client ID", value=def_id, placeholder="e.g. V12345")
+        v_app_key = st.text_input("App Key", type="password", value=def_key)
+        v_app_secret = st.text_input("App Secret", type="password", value=def_secret)
+        
+        if st.button("Connect Ventura", use_container_width=True):
+            if v_client_id and v_app_key and v_app_secret:
+                with st.spinner("Connecting..."):
+                    try:
+                        client = EaseAPIClient(client_id=v_client_id, app_key=v_app_key, app_secret=v_app_secret)
+                        client.login()
+                        st.session_state.ventura_client = client
+                        st.session_state.ventura_logged_in = True
+                        st.success("Connected!")
+                        st.rerun()
+                    except Exception as err:
+                        st.error(f"Failed: {err}")
+            else:
+                st.warning("Please fill all broker fields.")
+    else:
+        st.success("🟢 Connection Live")
+        if st.button("Disconnect Broker", use_container_width=True):
+            st.session_state.ventura_client = None
+            st.session_state.ventura_logged_in = False
+            st.rerun()
 
 ticker = st.text_input("Ticker symbol (use .NS or .BO suffix for Indian stocks, e.g. RELIANCE.NS)", "AAPL")
 ticker = ticker.upper().strip()
@@ -183,3 +220,46 @@ if run_btn and ticker:
             st.error(str(e))
         except Exception as e:
             st.error(f"Something went wrong: {e}")
+
+# --- ADD-ON: PERSISTENT TRADING DESK CONTEXT ---
+# This block is moved to the root level. It checks if the broker is active and displays 
+# the trading matrix consistently, even across clicks.
+if st.session_state.ventura_logged_in and st.session_state.ventura_client:
+    st.divider()
+    st.subheader("⚡ Ventura Instant Execution Matrix")
+    clean_sym = ticker.replace(".NS", "").replace(".BO", "")
+    is_in = ticker.endswith(".NS") or ticker.endswith(".BO")
+
+    with st.form("ventura_form"):
+        f1, f2, f3 = st.columns(3)
+        with f1:
+            ex_val = f1.selectbox("Segment", ["NSE", "BSE"], index=0 if is_in else 0)
+            side_val = f1.selectbox("Action", ["BUY", "SELL"])
+        with f2:
+            sym_val = f2.text_input("Trading Code", value=clean_sym)
+            type_val = f2.selectbox("Order Type", ["MARKET", "LIMIT"])
+        with f3:
+            qty_val = f3.number_input("Shares Count", min_value=1, step=1, value=1)
+            # Default target price safely handles if technical analysis hasn't run yet
+            initial_price = float(st.session_state.get('last_price_fallback', 0.0))
+            if 'technicals' in locals():
+                initial_price = float(technicals['current_price'])
+                st.session_state.last_price_fallback = initial_price
+            price_val = f3.number_input("Target Price (INR)", min_value=0.0, value=initial_price, step=0.05)
+        
+        submit = st.form_submit_button("Route Order Packet", type="primary", use_container_width=True)
+        if submit:
+            try:
+                res = st.session_state.ventura_client.place_order(
+                    exchange=ex_val,
+                    trading_symbol=sym_val.upper().strip(),
+                    transaction_type=side_val,
+                    order_type=type_val,
+                    quantity=int(qty_val),
+                    price=float(price_val),
+                    validity="0"
+                )
+                st.toast("Transmitted successfully!", icon="🚀")
+                st.json(res)
+            except Exception as o_err:
+                st.error(f"Routing Failed: {o_err}")
